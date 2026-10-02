@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- 独立页面 + 普通文档流：筛选条件里有关键字输入框，弹层里的输入框正是之前
+     手机输入法那一串 BUG 的来源。这里页面本身可滚动，键盘交给浏览器原生处理。 -->
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-visual">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="记账本">
+<meta name="theme-color" content="#EDF1F9">
+<link rel="manifest" href="manifest.json">
+<title>筛选与批量清理 · 本地记账本</title>
+<script>
+(function(){
+  try{
+    var t=localStorage.getItem('local_ledger_theme');
+    if(t==='light'||t==='dark'||t==='glass') document.documentElement.setAttribute('data-theme',t);
+  }catch(e){}
+})();
+</script>
+<link rel="stylesheet" href="app.css">
+<style>
+html,body{height:auto!important;min-height:100%;overflow:visible!important;overscroll-behavior-y:auto;}
+.mgwrap{position:relative;z-index:1;max-width:430px;margin:0 auto;padding:0 16px calc(40px + env(safe-area-inset-bottom,0px));}
+.phead{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;
+  min-height:52px;padding:env(safe-area-inset-top,0px) 4px 0;margin:0 -16px;
+  background:var(--bg);box-shadow:0 1px 0 var(--l6);}
+.phead .ph-t{font-size:17px;font-weight:700;}
+.phead .ph-cancel{font-size:15px;color:var(--t2);padding:8px 6px;}
+.phead .ph-ok{font-size:15px;font-weight:700;color:#fff;padding:7px 13px;border-radius:14px;
+  background:linear-gradient(145deg,var(--btn-a),var(--btn-b));box-shadow:0 4px 14px rgba(26,82,224,.3);}
+.phead .ph-ok:active{transform:scale(.96);}
+input,select{-webkit-appearance:none;appearance:none;border:0;background:transparent;font-family:inherit;font-size:15px;color:var(--t1);}
+select.v{flex:1;min-width:0;text-align:right;direction:rtl;}
+input[type="date"]{-webkit-appearance:none;appearance:none;min-height:22px;}
+.tip{margin:14px 4px 0;font-size:12px;color:var(--t3);line-height:1.6;}
+.mgcard{margin-top:12px;padding:12px;border-radius:var(--r-md);background:var(--w58);
+  box-shadow:inset 0 1px 0 var(--w90),0 4px 12px var(--s6);}
+/* 工具条放在列表上方而不是屏幕底部：底部会被软键盘顶掉，顶部永远可见 */
+.mgbar{position:sticky;top:52px;z-index:15;display:flex;align-items:center;gap:10px;margin:12px -16px 0;
+  padding:10px 16px;background:var(--bg);box-shadow:0 1px 0 var(--l6);}
+.mgbar .cnt{flex:1;text-align:center;font-size:13px;font-weight:600;color:var(--t2);}
+.mbtn{font-size:13px;font-weight:700;padding:8px 12px;border-radius:12px;background:var(--l7);color:var(--t1);}
+.mbtn:active{transform:scale(.96);}
+.mbtn.dg{background:var(--expbg);color:var(--expense);}
+.mbtn[disabled]{opacity:.45;}
+.mrow{display:flex;align-items:center;gap:10px;padding:11px 12px;border-bottom:1px solid var(--l6);}
+.mrow .ck{width:22px;height:22px;flex:0 0 22px;accent-color:var(--primary);}
+.mrow .ci{width:34px;height:34px;flex:0 0 34px;border-radius:17px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;}
+.mrow .mid{flex:1;min-width:0;}
+.mrow .mid b{display:block;font-size:14.5px;font-weight:600;}
+.mrow .mid i{display:block;font-style:normal;font-size:11.5px;color:var(--t3);margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mrow .a{font-size:15px;font-weight:700;flex:0 0 auto;}
+.mrow.picked{background:var(--incbg);}
+/* 类别选择器：不再用原生 <select>——它会一次性弹出全部类别，列表一长手机上就会
+   出现那几秒的底部重排闪烁。改成页面内的固定高度网格，一屏只露 6 个，其余滚动找。 */
+.catpick{margin-top:0;padding:2px 6px 6px;max-height:86px;overflow-y:auto;overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
+  box-shadow:inset 0 -6px 8px -8px var(--s12);}
+.catpick::-webkit-scrollbar{width:3px;}
+.catpick::-webkit-scrollbar-thumb{background:var(--l7);border-radius:2px;}
+.cp{height:32px;padding:0 4px;border-radius:10px;background:var(--l7);color:var(--t2);
+  font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:3px;
+  white-space:nowrap;overflow:hidden;}
+.cp span{font-size:10px;font-weight:700;opacity:.55;}
+.cp.on{background:linear-gradient(145deg,var(--btn-a),var(--btn-b));color:#fff;
+  box-shadow:0 3px 8px rgba(26,82,224,.25);}
+.cp.on span{opacity:.8;}
+.cp:active{transform:scale(.96);}
+.cptip{margin:6px 4px 0;font-size:11px;color:var(--t3);}
+</style>
+</head>
+<body>
+<div class="bgfx"><i class="b b1"></i><i class="b b2"></i><i class="b b3"></i><i class="b b4"></i></div>
+
+<div class="mgwrap">
+  <div class="phead">
+    <button class="ph-cancel" id="mBack">返回</button>
+    <span class="ph-t">筛选与批量清理</span>
+    <button class="ph-ok" id="mApply">应用</button>
+  </div>
+
+  <div class="mgcard">
+    <div class="seg" id="fType">
+      <button class="on" data-v="all">全部</button>
+      <button data-v="expense">支出</button>
+      <button data-v="income">收入</button>
+    </div>
+    <div class="wrap" style="margin-top:10px">
+      <div class="frow"><span class="l">类别</span><span class="v" id="fCatTxt">全部类别</span></div>
+    </div>
+    <div class="wrap" style="margin-top:8px">
+      <div class="catpick" id="fCat"></div>
+    </div>
+    <div class="cptip" id="fCatTip" hidden>一次显示 6 个，上下滑动查找其余类别</div>
+    <div class="wrap" style="margin-top:8px">
+      <div class="frow"><span class="l">起始</span><input class="v" id="fFrom" type="date" enterkeyhint="done"></div>
+      <div class="frow"><span class="l">截止</span><input class="v" id="fTo" type="date" enterkeyhint="done"></div>
+      <div class="frow"><span class="l">关键字</span><input class="v" id="fKw" placeholder="备注或类别名包含" maxlength="20"
+        enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
+    </div>
+    <div class="btnrow"><button class="btn ghost" id="fReset" style="margin-top:10px">重置筛选</button></div>
+  </div>
+
+  <div class="mgbar">
+    <button class="mbtn" id="mAll">全选</button>
+    <span class="cnt" id="mCount">已选 0 笔</span>
+    <button class="mbtn dg" id="mDel" disabled>删除所选</button>
+  </div>
+
+  <div id="mList"></div>
+  <div class="tip">「应用」会把当前筛选条件带回首页，首页明细只显示命中的记录。<br>不需要筛选时记得点「重置筛选」，否则首页会一直处于过滤状态。</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="store.js"></script>
+<script>
+(function(){
+'use strict';
+
+var sel={};               // 已勾选的记录 id
+var cur=cloneObj(EMPTY_FILTER);
+
+(function(){
+  var t='glass';
+  try{ var s=localStorage.getItem('local_ledger_theme'); if(s) t=s; }catch(e){}
+  applyTheme(t,false);
+})();
+loadCats(); load(); loadFilter();
+cur=cloneObj(filter);
+
+/* ---------- 筛选条件 ---------- */
+function hideKeyboard(){
+  var a=document.activeElement;
+  if(!a) return;
+  // 日期框弹出的是原生滚轮选择器，不是软键盘，失焦反而会把选择器关掉
+  if(a.tagName==='TEXTAREA' || (a.tagName==='INPUT' && a.type!=='date')){
+    try{ a.blur(); }catch(e){}
+  }
+}
+function syncTypeSeg(){
+  Array.prototype.forEach.call(document.querySelectorAll('#fType button'),function(b){
+    b.className = b.getAttribute('data-v')===cur.type ? 'on' : '';
+  });
+}
+Array.prototype.forEach.call(document.querySelectorAll('#fType button'),function(b){
+  b.addEventListener('click',function(){
+    hideKeyboard();
+    cur.type=b.getAttribute('data-v');
+    cur.cat='';                       // 换类型后原类别 id 不再适用
+    syncTypeSeg(); renderCatOptions(); renderList();
+  });
+});
+/* 类别选择器：一屏固定只露 6 个，其余在框内滚动。
+   原生 <select> 会把 18 个类别一次性全展开，手机上底部会重排闪烁几秒，弃用。 */
+var CAT_SHOW=6;
+function catOptions(){
+  var t=cur.type==='all'? '' : cur.type;
+  var out=[{id:'',n:'全部',tag:''}];
+  ['expense','income'].forEach(function(tp){
+    if(t && tp!==t) return;
+    catArr(tp).forEach(function(c){
+      out.push({id:c.id,n:c.n,tag:t? '' : (tp==='income'?'收':'支')});
+    });
+  });
+  return out;
+}
+function renderCatOptions(){
+  var box=document.getElementById('fCat');
+  var list=catOptions();
+  box.innerHTML=list.map(function(c){
+    return '<button type="button" class="cp'+(cur.cat===c.id?' on':'')+'" data-cat="'+c.id+'">'
+      + esc(c.n) + (c.tag? '<span>'+c.tag+'</span>':'') + '</button>';
+  }).join('');
+  var hit=null;
+  list.forEach(function(c){ if(c.id===cur.cat) hit=c; });
+  var txt=document.getElementById('fCatTxt');
+  txt.textContent = (cur.cat && hit)? hit.n : '全部类别';
+  txt.className = cur.cat? 'v filled' : 'v';
+  document.getElementById('fCatTip').hidden = list.length<=CAT_SHOW;
+  box.scrollTop=0;
+}
+document.getElementById('fCat').addEventListener('click',function(e){
+  var el=e.target, b=null;
+  while(el && el!==this){ if(el.classList && el.classList.contains('cp')){ b=el; break; } el=el.parentNode; }
+  if(!b) return;
+  cur.cat=b.getAttribute('data-cat'); sel={}; renderCatOptions(); renderList();
+});
+['fFrom','fTo'].forEach(function(id){
+  document.getElementById(id).addEventListener('change',function(){
+    cur[id==='fFrom'?'from':'to']=this.value; sel={}; renderList();
+  });
+});
+document.getElementById('fKw').addEventListener('input',function(){
+  cur.kw=this.value; sel={}; renderList();
+});
+document.getElementById('fReset').addEventListener('click',function(){
+  hideKeyboard();
+  cur=cloneObj(EMPTY_FILTER);
+  document.getElementById('fFrom').value='';
+  document.getElementById('fTo').value='';
+  document.getElementById('fKw').value='';
+  syncTypeSeg(); renderCatOptions(); renderList();
+  toast('已重置筛选');
+});
+
+/* ---------- 结果列表 ---------- */
+function rows(){
+  var f={type:cur.type,cat:cur.cat,from:cur.from,to:cur.to,kw:cur.kw};
+  return data.filter(function(r){ return matchFilter(r,f); })
+             .slice().sort(function(a,b){ return a.date<b.date?1:a.date>b.date?-1:(b.ts||0)-(a.ts||0); });
+}
+function renderList(){
+  var list=rows();
+  var box=document.getElementById('mList');
+  if(!list.length){
+    box.innerHTML='<div class="empty"><div class="big">🔍</div>没有符合条件的记录<br>试试放宽筛选条件</div>';
+  }else{
+    var html='';
+    list.forEach(function(r){
+      var c=catOf(r.type,r.cat);
+      var col=r.type==='income'?'var(--income)':'var(--expense)';
+      html+='<div class="mrow'+(sel[r.id]?' picked':'')+'" data-id="'+r.id+'">'+
+        '<input type="checkbox" class="ck" data-id="'+r.id+'"'+(sel[r.id]?' checked':'')+'>'+
+        '<span class="ci" style="background:'+c.weak+';color:'+c.color+'">'+esc(c.c)+'</span>'+
+        '<span class="mid"><b>'+esc(c.n)+'</b><i>'+r.date+' · '+esc(r.note||'无备注')+'</i></span>'+
+        '<span class="a" style="color:'+col+'">'+money(r.type==='income'?r.amount:-r.amount)+'</span></div>';
+    });
+    box.innerHTML=html;
+    Array.prototype.forEach.call(box.querySelectorAll('.mrow'),function(row){
+      row.addEventListener('click',function(e){
+        if(e.target && e.target.classList && e.target.classList.contains('ck')) return;
+        var id=row.getAttribute('data-id');
+        if(sel[id]) delete sel[id]; else sel[id]=true;
+        renderList();
+      });
+    });
+    Array.prototype.forEach.call(box.querySelectorAll('.ck'),function(ck){
+      ck.addEventListener('change',function(){
+        var id=ck.getAttribute('data-id');
+        if(ck.checked) sel[id]=true; else delete sel[id];
+        renderList();
+      });
+    });
+  }
+  var n=Object.keys(sel).length;
+  document.getElementById('mCount').textContent='已选 '+n+' 笔 / 共 '+list.length+' 笔';
+  document.getElementById('mDel').disabled = n===0;
+  document.getElementById('mAll').textContent = (n>0 && n===list.length)? '取消全选' : '全选';
+}
+
+document.getElementById('mAll').addEventListener('click',function(){
+  var list=rows();
+  var n=Object.keys(sel).length;
+  if(n===list.length && n>0){ sel={}; }
+  else{ sel={}; list.forEach(function(r){ sel[r.id]=true; }); }
+  renderList();
+});
+document.getElementById('mDel').addEventListener('click',function(){
+  var ids=Object.keys(sel);
+  if(!ids.length){ toast('请先勾选要删除的记录'); return; }
+  if(!confirm('确定删除选中的 '+ids.length+' 笔记录？该操作不可恢复。')) return;
+  data=data.filter(function(r){ return ids.indexOf(r.id)<0; });
+  save(); sel={}; markDirty(); renderList();
+  toast('已删除 '+ids.length+' 笔');
+});
+
+/* ---------- 应用 / 返回 ---------- */
+function markDirty(){ try{ localStorage.setItem('local_ledger_dirty',String(Date.now())); }catch(e){} }
+function goHome(){ hideKeyboard(); location.replace('index.html'); }
+document.getElementById('mApply').addEventListener('click',function(){
+  hideKeyboard();
+  saveFilter(cur);
+  markDirty();
+  toast(filterOn(cur)? ('已应用筛选：'+filterLabel(cur)) : '已清除筛选');
+  setTimeout(goHome,600);
+});
+document.getElementById('mBack').addEventListener('click',goHome);
+
+document.getElementById('fKw').addEventListener('keydown',function(e){
+  if(e.key==='Enter'||e.keyCode===13){ e.preventDefault(); hideKeyboard(); }
+});
+document.addEventListener('focusin',function(e){
+  var t=e.target;
+  if(!t || (t.tagName!=='INPUT'&&t.tagName!=='TEXTAREA')) return;
+  setTimeout(function(){
+    var a=document.activeElement;
+    if(!a || (a.tagName!=='INPUT'&&a.tagName!=='TEXTAREA')) return;
+    var vh=(window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    var r=a.getBoundingClientRect();
+    if(!r || !r.bottom) return;
+    var over=r.bottom-(vh-16);
+    if(over>0 && window.scrollBy){ try{ window.scrollBy(0,over+8); }catch(err){} }
+  },320);
+});
+
+document.getElementById('fFrom').value=cur.from||'';
+document.getElementById('fTo').value=cur.to||'';
+document.getElementById('fKw').value=cur.kw||'';
+syncTypeSeg(); renderCatOptions(); renderList();
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){ navigator.serviceWorker.register('sw.js').catch(function(){}); });
+}
+})();
+</script>
+</body>
+</html>

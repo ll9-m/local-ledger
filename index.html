@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- interactive-widget=resizes-visual：安卓 Chrome 默认是 resizes-content，软键盘一弹出就会把
+     布局视口整体压缩 → 整页重排 + 所有 fixed 元素跳位，这正是安卓闪屏的根源。
+     改成只缩可视视口、布局视口不动：页面零重排，键盘高度再由 JS 主动补偿。 -->
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-visual">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="记账本">
+<meta name="theme-color" content="#EDF1F9">
+<link rel="manifest" href="manifest.json">
+<title>本地记账本</title>
+<script>
+/* 首屏前同步应用已保存的主题，避免深色用户看到一帧白底 */
+(function(){
+  try{
+    var t=localStorage.getItem('local_ledger_theme');
+    if(t==='light'||t==='dark'||t==='glass') document.documentElement.setAttribute('data-theme',t);
+  }catch(e){}
+})();
+</script>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="bgfx"><i class="b b1"></i><i class="b b2"></i><i class="b b3"></i><i class="b b4"></i></div>
+
+<div class="app">
+  <div class="safe-top"></div>
+
+  <!-- ============ 明细 ============ -->
+  <section class="page active" id="page-detail">
+    <div class="hdr">
+      <div class="nav">
+        <button id="prevMonth">‹</button>
+        <div class="chip"><span id="curMonth"></span></div>
+        <button id="nextMonth">›</button>
+      </div>
+      <button class="fbtn" id="btnFilter">筛选</button>
+    </div>
+    <div class="subline">
+      <span class="sub" id="recCount"></span>
+      <button class="ftag" id="fbar" style="display:none"><span id="fbarTxt"></span><i>✕</i></button>
+    </div>
+
+    <div class="glass hero">
+      <div class="row1">
+        <div>
+          <div class="lab">本月结余</div>
+          <div class="bignum" id="mBalance">¥0.00</div>
+        </div>
+        <div class="tag flat" id="mTrend">较上月 —</div>
+      </div>
+      <div class="gap"></div>
+      <div class="io">
+        <div><div class="lab">本月收入</div><div class="v v-income" id="mIncome">¥0.00</div></div>
+        <div><div class="lab">本月支出</div><div class="v v-expense" id="mExpense">¥0.00</div></div>
+      </div>
+    </div>
+
+    <div id="list"></div>
+  </section>
+
+  <!-- ============ 统计 ============ -->
+  <section class="page" id="page-stat">
+    <div class="hdr"><h1>收支统计</h1><div class="sub" id="statHint"></div></div>
+
+    <div class="gseg" id="statSeg">
+      <span class="thumb" id="segThumb"></span>
+      <button class="on" data-m="day">日</button>
+      <button data-m="month">月</button>
+      <button data-m="year">年</button>
+    </div>
+
+    <!-- 日 -->
+    <div id="sv-day">
+      <div style="display:flex;justify-content:center;margin-top:14px;">
+        <div class="nav">
+          <button id="prevDay">‹</button>
+          <div class="chip" style="min-width:112px"><span id="dayLabel"></span></div>
+          <button id="nextDay">›</button>
+        </div>
+      </div>
+      <div class="glass card tri" style="margin-top:12px;">
+        <div><div class="l">当日收入</div><div class="v v-income" id="dIncome">¥0</div></div>
+        <div><div class="l">当日支出</div><div class="v v-expense" id="dExpense">¥0</div></div>
+        <div><div class="l">当日结余</div><div class="v neu" id="dBalance">¥0</div></div>
+      </div>
+      <div class="glass card">
+        <div class="ct">与日均对比</div>
+        <div class="cmp">
+          <div class="t"><span>当日支出</span><span class="r" id="dCmpTxt">—</span></div>
+          <div class="cmpbar"><span class="fill" id="dCmpFill" style="width:0%;background:linear-gradient(90deg,#FF9AA0,#E8434F)"></span><span class="avg"></span></div>
+          <div class="d" id="dCmpDesc">近 30 天日均 —</div>
+        </div>
+      </div>
+      <div class="glass card">
+        <div class="ct">当日支出分类</div>
+        <div id="dRank"></div>
+      </div>
+    </div>
+
+    <!-- 月 -->
+    <div id="sv-month" style="display:none">
+      <div style="display:flex;justify-content:center;margin-top:14px;">
+        <div class="nav">
+          <button id="prevStatMonth">‹</button>
+          <div class="chip" style="min-width:96px"><span id="statMonth"></span></div>
+          <button id="nextStatMonth">›</button>
+        </div>
+      </div>
+      <div class="glass card tri" style="margin-top:12px;">
+        <div><div class="l">本月收入</div><div class="v v-income" id="sIncome">¥0</div></div>
+        <div><div class="l">本月支出</div><div class="v v-expense" id="sExpense">¥0</div></div>
+        <div><div class="l">本月结余</div><div class="v neu" id="sBalance">¥0</div></div>
+      </div>
+      <div class="glass card">
+        <div class="ct">近 6 个月结余趋势</div>
+        <canvas id="trend"></canvas>
+      </div>
+      <div class="glass card">
+        <div class="ct">本月支出分类</div>
+        <div id="rank"></div>
+      </div>
+    </div>
+
+    <!-- 年 -->
+    <div id="sv-year" style="display:none">
+      <div style="display:flex;justify-content:center;margin-top:14px;">
+        <div class="nav">
+          <button id="prevYear">‹</button>
+          <div class="chip" style="min-width:80px"><span id="yearLabel"></span></div>
+          <button id="nextYear">›</button>
+        </div>
+      </div>
+      <div class="glass card tri" style="margin-top:12px;">
+        <div><div class="l">全年收入</div><div class="v v-income" id="yIncome">¥0</div></div>
+        <div><div class="l">全年支出</div><div class="v v-expense" id="yExpense">¥0</div></div>
+        <div><div class="l">全年结余</div><div class="v neu" id="yBalance">¥0</div></div>
+      </div>
+      <div class="glass card">
+        <div class="ct">收支月份分布 <span style="font-size:11px;font-weight:500;color:var(--t3)">
+          <span style="color:var(--income)">■</span> 收入 <span style="color:var(--expense)">■</span> 支出</span></div>
+        <canvas id="ybars"></canvas>
+      </div>
+      <div class="glass card">
+        <div class="ct">年度支出分类 <span class="more" id="yAvg">月均 —</span></div>
+        <div id="yRank"></div>
+      </div>
+      <div class="glass card">
+        <div class="ct">月度结余明细</div>
+        <div id="yMonths"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 我的 ============ -->
+  <section class="page" id="page-me">
+    <div class="hdr"><h1>我的</h1></div>
+    <div class="glass mecard">
+      <div class="avatar">记</div>
+      <div style="flex:1">
+        <div style="font-size:16.5px;font-weight:700;">本地记账本</div>
+        <div style="font-size:12.5px;color:var(--t3);margin-top:4px;">数据仅保存在本机 · 无需联网</div>
+      </div>
+    </div>
+    <div class="loc" style="margin-top:14px;">
+      <div style="font-size:22px;">🛡️</div>
+      <div style="flex:1">
+        <div class="l">本地存储 · 离线可用</div>
+        <div class="d" id="meStat">已记录 0 笔</div>
+      </div>
+    </div>
+    <div class="setlist">
+      <div class="setrow" id="rowTheme"><span class="l">外观主题</span><span class="v" id="themeVal">毛玻璃</span><span class="c">›</span></div>
+      <div class="setrow" id="rowCat"><span class="l">类别管理</span><span class="v">支出 12 · 收入 6</span><span class="c">›</span></div>
+      <div class="setrow" id="rowExport"><span class="l">导出数据</span><span class="v">CSV 备份到本机</span><span class="c">›</span></div>
+      <div class="setrow" id="rowImport"><span class="l">导入数据</span><span class="v">从 CSV 恢复</span><span class="c">›</span></div>
+      <div class="setrow" id="rowDemo"><span class="l">载入示例数据</span><span class="v">想先看看效果时用</span><span class="c">›</span></div>
+      <div class="setrow" id="rowClear"><span class="l" style="color:var(--expense)">清空全部数据</span><span class="v dg">不可恢复</span><span class="c">›</span></div>
+      <div class="setrow"><span class="l">关于记账本</span><span class="v">v2.0.0</span></div>
+    </div>
+    <div class="ver">记账本 v2.0.0 · 本地版</div>
+  </section>
+
+  <div class="tail-space"></div>
+  <button class="fab" id="fab">+</button>
+
+  <nav class="tabbar">
+    <div class="pill">
+      <button class="tab on" data-tab="detail">
+        <span class="ti"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></span>
+        <span class="tl">明细</span>
+      </button>
+      <button class="tab" data-tab="stat">
+        <span class="ti"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span>
+        <span class="tl">统计</span>
+      </button>
+      <button class="tab" data-tab="me">
+        <span class="ti"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c0-3.6 3.4-6 7.5-6s7.5 2.4 7.5 6"/></svg></span>
+        <span class="tl">我的</span>
+      </button>
+    </div>
+  </nav>
+</div>
+
+<!-- ============ 遮罩 ============ -->
+<div class="mask" id="mask"></div>
+
+<!-- ============ 外观主题 ============ -->
+<div class="sheet" id="sheet-theme">
+  <div class="sh"><button class="x" id="thClose">✕</button><span class="t">外观主题</span><span style="width:26px"></span></div>
+  <div class="thpick">
+    <button class="thcard" data-th="light">
+      <span class="thpv pv-light"><i class="r1"></i><i class="r2"></i><i class="r3"></i></span>
+      <span class="thn">浅色</span>
+      <span class="thd">纯色卡片 · 清爽省电</span>
+    </button>
+    <button class="thcard" data-th="dark">
+      <span class="thpv pv-dark"><i class="r1"></i><i class="r2"></i><i class="r3"></i></span>
+      <span class="thn">深色</span>
+      <span class="thd">夜间护眼 · 纯色卡片</span>
+    </button>
+    <button class="thcard" data-th="glass">
+      <span class="thpv pv-glass"><i class="r1"></i><i class="r2"></i><i class="r3"></i></span>
+      <span class="thn">毛玻璃</span>
+      <span class="thd">静态光斑 · 玻璃材质</span>
+    </button>
+  </div>
+  <div class="thhint">切换后立即生效并记住选择 · 浅色与深色不启用模糊，比毛玻璃更省电</div>
+</div>
+
+<!-- ============ 记录详情 ============ -->
+<div class="sheet" id="sheet-detail">
+  <div class="sh"><span class="t">记录详情</span><span class="a" id="detailEdit">编辑</span></div>
+  <div class="dcard" id="dCard">
+    <div class="ico" id="dIco">食</div>
+    <div class="mid"><div class="n" id="dName">餐饮</div><div class="m" id="dNote">—</div></div>
+    <div class="a" id="dAmt">-¥0.00</div>
+  </div>
+  <div class="wrap">
+    <div class="frow"><span class="l">类别</span><span class="v filled" id="dCat">—</span></div>
+    <div class="frow"><span class="l">日期</span><span class="v filled" id="dDate">—</span></div>
+    <div class="frow"><span class="l">备注</span><span class="v filled" id="dNote2">—</span></div>
+  </div>
+  <div class="btnrow"><button class="btn danger" id="dDelete">删除</button><button class="btn" id="dSaveEdit">保存修改</button></div>
+</div>
+
+<!-- ============ 删除确认 ============ -->
+<div class="dlg" id="dlg">
+  <div class="t">删除这条记录？</div>
+  <div class="d">删除后该笔记录无法恢复，确定要删除吗？</div>
+  <div class="br"><button class="c" id="dlgCancel">取消</button><button class="k" id="dlgOk">确认删除</button></div>
+</div>
+
+<div class="toast" id="toast"></div>
+<input type="file" id="fileInput" accept=".csv,text/csv" style="display:none">
+
+<script src="store.js"></script>
+<script>
+(function(){
+'use strict';
+var sheetTheme=document.getElementById('sheet-theme');
+var cur=new Date();
+var curType='expense', curCat='food', editingId=null;
+var statMode='day';
+var dayCur=new Date(); dayCur.setHours(0,0,0,0);
+var statYear=cur.getFullYear();
+
+function monthKey(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1); }
+function inMonth(r,d){ return r.date.slice(0,7)===monthKey(d); }
+function sumOf(rows){ var i=0,e=0; rows.forEach(function(r){ if(r.type==='income') i+=r.amount; else e+=r.amount; }); return {inc:i,exp:e,bal:i-e}; }
+
+/* ---------- 筛选：入口在明细页右上角，条件与 manage.html 共用一份 ---------- */
+function syncFilterBar(){
+  var btn=document.getElementById('btnFilter');
+  var bar=document.getElementById('fbar');
+  var on=filterOn();
+  btn.className='fbtn'+(on?' on':'');
+  if(on){
+    bar.style.display='';
+    document.getElementById('fbarTxt').textContent=filterLabel();
+  }else{
+    bar.style.display='none';
+  }
+}
+document.getElementById('btnFilter').addEventListener('click',function(){ location.href='manage.html'; });
+document.getElementById('fbar').addEventListener('click',function(){
+  clearFilter(); renderAll(); toast('已清除筛选');
+});
+
+/* ---------- render: 明细 ---------- */
+function renderDetail(){
+  document.getElementById('curMonth').textContent=cur.getFullYear()+'年'+(cur.getMonth()+1)+'月';
+  var msAll=data.filter(function(r){return inMonth(r,cur);});
+  var s=sumOf(msAll);
+  var ms=msAll.filter(function(r){return matchFilter(r);});   // 汇总仍按整月，列表按筛选
+  document.getElementById('mIncome').textContent=money(s.inc);
+  document.getElementById('mExpense').textContent=money(s.exp);
+  document.getElementById('mBalance').textContent=money(s.bal);
+
+  var pd=new Date(cur.getFullYear(),cur.getMonth()-1,1);
+  var ps=sumOf(data.filter(function(r){return inMonth(r,pd);}));
+  var el=document.getElementById('mTrend');
+  if(ps.bal!==0){
+    var rate=Math.round(((s.bal-ps.bal)/Math.abs(ps.bal))*100);
+    var up=rate>=0;
+    el.textContent='较上月 '+(up?'↑ ':'↓ ')+Math.abs(rate)+'%';
+    el.className='tag'+(up?'':' down');
+  }else{ el.textContent='较上月 —'; el.className='tag flat'; }
+  document.getElementById('recCount').textContent =
+    filterOn()? (ms.length+' / '+msAll.length+' 笔') : (msAll.length+' 笔');
+  syncFilterBar();
+
+  var groups={};
+  ms.forEach(function(r){ (groups[r.date]=groups[r.date]||[]).push(r); });
+  var keys=Object.keys(groups).sort().reverse();
+  var box=document.getElementById('list');
+  if(!keys.length){
+    box.innerHTML = filterOn()
+      ? '<div class="empty"><div class="big">🔍</div>本月没有符合筛选条件的记录<br>点右上角「筛选」调整或清除条件</div>'
+      : '<div class="empty"><div class="big">📒</div>本月还没有记录<br>点击右下角 + 记一笔</div>';
+    return;
+  }
+  var html='';
+  keys.forEach(function(k){
+    var arr=groups[k].slice().sort(function(a,b){return (b.ts||0)-(a.ts||0);});
+    var g=sumOf(arr);
+    html+='<div class="daygroup"><div class="dayhdr"><span class="d">'+esc(dayLabel(k))+'</span>'+
+          '<span class="s">收 '+money(g.inc)+' · 支 '+money(g.exp)+'</span></div><div class="daycard">';
+    arr.forEach(function(r){
+      var c=catOf(r.type,r.cat);
+      var col=r.type==='income'?'var(--income)':'var(--expense)';
+      html+='<div class="rec" data-id="'+r.id+'">'+
+        '<div class="ico" style="background:'+c.weak+';color:'+c.color+'">'+c.c+'</div>'+
+        '<div class="mid"><div class="n">'+esc(c.n)+'</div><div class="m">'+esc(r.note||'无备注')+'</div></div>'+
+        '<div class="a" style="color:'+col+'">'+money(r.type==='income'?r.amount:-r.amount)+'</div></div>';
+    });
+    html+='</div></div>';
+  });
+  box.innerHTML=html;
+  Array.prototype.forEach.call(box.querySelectorAll('.rec'),function(el){
+    el.addEventListener('click',function(){ openDetail(el.getAttribute('data-id')); });
+  });
+}
+
+/* ---------- 统计：通用分类排行 ---------- */
+function renderRank(boxId, rows){
+  var byCat={};
+  rows.forEach(function(r){ if(r.type!=='income'){ byCat[r.cat]=(byCat[r.cat]||0)+r.amount; } });
+  var list=Object.keys(byCat).map(function(k){return {id:k,v:byCat[k]};}).sort(function(a,b){return b.v-a.v;});
+  var total=list.reduce(function(s,x){return s+x.v;},0);
+  var box=document.getElementById(boxId);
+  if(!list.length){ box.innerHTML='<div class="empty-sm">暂无支出记录</div>'; return; }
+  box.innerHTML=list.slice(0,6).map(function(x){
+    var c=catOf('expense',x.id);
+    var pct=total?Math.round(x.v/total*100):0;
+    var wpct=Math.max(4,Math.round(x.v/list[0].v*100));
+    return '<div class="rankrow"><span class="dot" style="background:'+c.color+'"></span>'+
+      '<span class="n">'+esc(c.n)+'</span>'+
+      '<span class="track"><span class="bar" style="width:'+wpct+'%;background:linear-gradient(90deg,'+c.color+'77,'+c.color+')"></span></span>'+
+      '<span class="p">'+pct+'%</span><span class="a">'+moneyShort(x.v)+'</span></div>';
+  }).join('');
+}
+
+/* ---------- 统计：日 ---------- */
+function renderStatDay(){
+  var k=isoOf(dayCur);
+  document.getElementById('dayLabel').textContent=(k===todayISO()?'今天 · ':'')+k.slice(5)+' '+WEEK[dayCur.getDay()];
+  var rows=data.filter(function(r){return r.date===k;});
+  var s=sumOf(rows);
+  document.getElementById('dIncome').textContent=moneyShort(s.inc);
+  document.getElementById('dExpense').textContent=moneyShort(s.exp);
+  document.getElementById('dBalance').textContent=moneyShort(s.bal);
+
+  // 近 30 天日均支出
+  var start=new Date(dayCur); start.setDate(start.getDate()-29);
+  var sk=isoOf(start), ek=k;
+  var win=data.filter(function(r){return r.date>=sk && r.date<=ek;});
+  var we=0; win.forEach(function(r){ if(r.type!=='income') we+=r.amount; });
+  var avg=we/30;
+  var fillEl=document.getElementById('dCmpFill');
+  var txtEl=document.getElementById('dCmpTxt');
+  var descEl=document.getElementById('dCmpDesc');
+  if(avg>0){
+    var ratio=s.exp/avg;                       // 1 = 日均水平
+    var pct=Math.max(2,Math.min(100, ratio/2*100));
+    fillEl.style.width=pct+'%';
+    var diff=Math.round((ratio-1)*100);
+    txtEl.textContent = diff===0?'与日均持平':(diff>0?'高于日均 '+diff+'%':'低于日均 '+Math.abs(diff)+'%');
+    txtEl.style.color = diff>0?'var(--expense)':(diff<0?'var(--income)':'var(--t2)');
+    descEl.textContent='近 30 天日均支出 '+moneyShort(avg)+'（竖线为日均水平）';
+  }else{
+    fillEl.style.width='0%';
+    txtEl.textContent='暂无对比数据'; txtEl.style.color='var(--t2)';
+    descEl.textContent='近 30 天暂无支出记录';
+  }
+  renderRank('dRank', rows);
+}
+
+/* ---------- 统计：月 ---------- */
+function renderStatMonth(){
+  document.getElementById('statMonth').textContent=cur.getFullYear()+'年'+(cur.getMonth()+1)+'月';
+  var ms=data.filter(function(r){return inMonth(r,cur);});
+  var s=sumOf(ms);
+  document.getElementById('sIncome').textContent=moneyShort(s.inc);
+  document.getElementById('sExpense').textContent=moneyShort(s.exp);
+  document.getElementById('sBalance').textContent=moneyShort(s.bal);
+  renderRank('rank', ms);
+  drawTrend();
+}
+
+/* ---------- 统计：年 ---------- */
+function renderStatYear(){
+  var y=statYear;
+  document.getElementById('yearLabel').textContent=y+' 年';
+  var rows=data.filter(function(r){return r.date.slice(0,4)===String(y);});
+  var s=sumOf(rows);
+  document.getElementById('yIncome').textContent=moneyShort(s.inc);
+  document.getElementById('yExpense').textContent=moneyShort(s.exp);
+  document.getElementById('yBalance').textContent=moneyShort(s.bal);
+
+  var mi=[],me=[],mb=[];
+  for(var m=0;m<12;m++){
+    var mk=y+'-'+pad(m+1);
+    var rr=data.filter(function(r){return r.date.slice(0,7)===mk;});
+    var t=sumOf(rr);
+    mi.push(t.inc); me.push(t.exp); mb.push(t.bal);
+  }
+  drawBars(mi,me);
+  renderRank('yRank', rows);
+  var cntMonths=0; mb.forEach(function(v,i){ if(mi[i]||me[i]) cntMonths++; });
+  document.getElementById('yAvg').textContent = cntMonths? ('月均支出 '+moneyShort(s.exp/cntMonths)) : '月均 —';
+
+  var box=document.getElementById('yMonths');
+  var html='';
+  for(var i=0;i<12;i++){
+    if(!mi[i] && !me[i]) continue;
+    var neg=mb[i]<0;
+    html+='<div class="rankrow"><span class="n" style="width:44px;flex:0 0 44px;color:var(--t2)">'+(i+1)+'月</span>'+
+      '<span class="track"><span class="bar" style="width:'+Math.max(4,Math.round(Math.abs(mb[i])/(Math.max.apply(null,mb.map(Math.abs))||1)*100))+'%;background:'+(neg?'linear-gradient(90deg,#FF9AA0,#E8434F)':'linear-gradient(90deg,#5FD8A8,#00A06B)')+';height:6px;border-radius:3px"></span></span>'+
+      '<span class="a" style="color:'+(neg?'var(--expense)':'var(--income)')+'">'+moneyShort(mb[i])+'</span></div>';
+  }
+  box.innerHTML=html||'<div class="empty-sm">'+y+' 年暂无记录</div>';
+}
+
+/* ---------- 统计总入口 ---------- */
+function renderStat(){
+  document.getElementById('sv-day').style.display   = statMode==='day'?'':'none';
+  document.getElementById('sv-month').style.display = statMode==='month'?'':'none';
+  document.getElementById('sv-year').style.display  = statMode==='year'?'':'none';
+  var idx = statMode==='day'?0:statMode==='month'?1:2;
+  document.getElementById('segThumb').style.transform='translateX('+(idx*100)+'%)';
+  Array.prototype.forEach.call(document.querySelectorAll('#statSeg button'),function(b){
+    b.classList.toggle('on', b.getAttribute('data-m')===statMode);
+  });
+  var hint = statMode==='day'?'按天查看收支':statMode==='month'?'按月查看收支':'按年查看收支';
+  document.getElementById('statHint').textContent=hint;
+  if(statMode==='day') renderStatDay();
+  else if(statMode==='month') renderStatMonth();
+  else renderStatYear();
+}
+Array.prototype.forEach.call(document.querySelectorAll('#statSeg button'),function(b){
+  b.addEventListener('click',function(){ statMode=b.getAttribute('data-m'); renderStat(); });
+});
+
+/* ---------- 图表 ---------- */
+/* canvas 不解析 CSS 变量（fillStyle='var(--x)' 是无效值），必须读计算后的实际颜色。
+   切换主题后要清缓存，否则图表会用旧主题的色值重绘。 */
+var _cssv={};
+function cssv(name){
+  var v=_cssv[name];
+  if(v===undefined){ v=getComputedStyle(document.documentElement).getPropertyValue(name).trim(); _cssv[name]=v; }
+  return v||'#888';
+}
+function cssvFlush(){ _cssv={}; }
+function canvasCtx(id,h){
+  var cv=document.getElementById(id);
+  if(!cv) return null;
+  var w=cv.clientWidth; if(!w) return null;
+  var dpr=window.devicePixelRatio||1;
+  cv.width=w*dpr; cv.height=h*dpr; cv.style.height=h+'px';
+  var ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  return {cv:cv,ctx:ctx,w:w,h:h};
+}
+function rrect(ctx,x,y,w,h,r){
+  if(h<=0) return;
+  r=Math.min(r,w/2,h/2);
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+}
+function drawTrend(){
+  var c=canvasCtx('trend',110); if(!c) return;
+  var ctx=c.ctx,w=c.w,h=c.h;
+  var pts=[],labels=[];
+  for(var i=5;i>=0;i--){
+    var d=new Date(cur.getFullYear(),cur.getMonth()-i,1);
+    var k=monthKey(d);
+    var v=0; data.forEach(function(r){ if(r.date.slice(0,7)===k){ v+= (r.type==='income'?r.amount:-r.amount); } });
+    pts.push(v); labels.push((d.getMonth()+1)+'月');
+  }
+  var max=Math.max.apply(null,pts.map(Math.abs)), min=Math.min.apply(null,pts.concat([0]));
+  var range=(max-min)||1, padB=16, padT=10, plotH=h-padB-padT;
+  var stepX=pts.length>1? w/(pts.length-1) : 0;
+  function px(i){ return pts.length>1? i*stepX : w/2; }
+  function py(v){ return padT+plotH-((v-min)/range)*plotH; }
+
+  // 面积
+  ctx.beginPath(); ctx.moveTo(px(0),py(pts[0]));
+  for(var i=1;i<pts.length;i++){ ctx.lineTo(px(i),py(pts[i])); }
+  var lastX=px(pts.length-1);
+  ctx.lineTo(lastX,h-padB); ctx.lineTo(px(0),h-padB); ctx.closePath();
+  var g=ctx.createLinearGradient(0,padT,0,h-padB);
+  g.addColorStop(0,cssv('--cfill')); g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g; ctx.fill();
+  // 线
+  ctx.beginPath(); ctx.moveTo(px(0),py(pts[0]));
+  for(var j=1;j<pts.length;j++){ ctx.lineTo(px(j),py(pts[j])); }
+  var lg=ctx.createLinearGradient(0,0,w,0);
+  lg.addColorStop(0,cssv('--cn2')); lg.addColorStop(1,cssv('--cn'));
+  ctx.strokeStyle=lg; ctx.lineWidth=2.6; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.stroke();
+  // 点
+  for(var p=0;p<pts.length;p++){
+    ctx.beginPath(); ctx.arc(px(p),py(pts[p]), p===pts.length-1?4.5:3, 0, Math.PI*2);
+    ctx.fillStyle=cssv('--dot'); ctx.fill();
+    ctx.lineWidth=2; ctx.strokeStyle=cssv('--cn'); ctx.stroke();
+  }
+  ctx.fillStyle=cssv('--l45'); ctx.font='10px -apple-system,sans-serif'; ctx.textAlign='center';
+  labels.forEach(function(l,i){ ctx.fillText(l,px(i),h-3); });
+}
+function drawBars(mi,me){
+  var c=canvasCtx('ybars',140); if(!c) return;
+  var ctx=c.ctx,w=c.w,h=c.h;
+  var padB=18,padT=8,plotH=h-padB-padT;
+  var max=Math.max(1,Math.max.apply(null,mi.concat(me)));
+  var n=12, step=w/n, bw=Math.max(4,Math.min(9,(step-8)/2));
+  for(var i=0;i<n;i++){
+    var cx=i*step+step/2;
+    var hi=mi[i]/max*plotH, he=me[i]/max*plotH;
+    if(hi>0){
+      var g1=ctx.createLinearGradient(0,h-padB-hi,0,h-padB);
+      g1.addColorStop(0,cssv('--bi1')); g1.addColorStop(1,cssv('--bi2'));
+      rrect(ctx,cx-bw-1.5,h-padB-hi,bw,hi,3); ctx.fillStyle=g1; ctx.fill();
+    }
+    if(he>0){
+      var g2=ctx.createLinearGradient(0,h-padB-he,0,h-padB);
+      g2.addColorStop(0,cssv('--be1')); g2.addColorStop(1,cssv('--be2'));
+      rrect(ctx,cx+1.5,h-padB-he,bw,he,3); ctx.fillStyle=g2; ctx.fill();
+    }
+    ctx.fillStyle=cssv('--l42'); ctx.font='9px -apple-system,sans-serif'; ctx.textAlign='center';
+    ctx.fillText(String(i+1),cx,h-4);
+  }
+  ctx.strokeStyle=cssv('--l8'); ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,h-padB+.5); ctx.lineTo(w,h-padB+.5); ctx.stroke();
+}
+
+/* ---------- render: 我的 ---------- */
+function renderMe(){
+  document.getElementById('meStat').textContent='已记录 '+data.length+' 笔 · 全部保存在本机';
+  var v=document.querySelector('#rowCat .v');
+  if(v) v.textContent='支出 '+catArr('expense').length+' · 收入 '+catArr('income').length;
+}
+
+/* ---------- tabs ---------- */
+function showTab(name){
+  Array.prototype.forEach.call(document.querySelectorAll('.page'),function(p){ p.classList.remove('active'); });
+  document.getElementById('page-'+name).classList.add('active');
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(t){
+    t.classList.toggle('on', t.getAttribute('data-tab')===name);
+  });
+  document.getElementById('fab').style.display = name==='detail'?'flex':'none';
+  if(name==='stat') renderStat();
+  if(name==='me') renderMe();
+}
+Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(t){
+  t.addEventListener('click',function(){ showTab(t.getAttribute('data-tab')); });
+});
+
+/* ---------- 记一笔 ---------- */
+var sheetCat=document.getElementById('sheet-cat');
+/* ---------- 滚动锁定 & 软键盘自适应 ---------- */
+var rootEl=document.documentElement;
+var vv=window.visualViewport||null;
+var appEl=document.querySelector('.app');
+var appH=window.innerHeight||rootEl.clientHeight||844;
+var kbH=0, kbOpen=false, focusKB=false, savedScroll=0;
+var vpPending=false;
+/* lastKbH：上次实测到的键盘高度。软键盘动画的第一帧拿不到真实高度，
+   用它预估上移量，才能和键盘同时起步；等键盘落定再用真值校正一次。 */
+var curShift=0, lastKbH=0, followT=null;
+
+function lockScroll(){
+  if(document.body.classList.contains('locked')) return;
+  savedScroll = appEl? appEl.scrollTop : 0;
+  document.body.classList.add('locked');   // 只冻结 .app 的滚动，body 不再脱离文档流
+}
+/* 关闭面板时主动收掉软键盘：否则输入框仍持有焦点，iOS 键盘可能不落、键盘降载态也永不复位 */
+function blurActiveInput(){
+  var a=document.activeElement;
+  if(a && (a.tagName==='INPUT'||a.tagName==='TEXTAREA')){ try{ a.blur(); }catch(e){} }
+  if(kbBlurT){ clearTimeout(kbBlurT); kbBlurT=null; }
+  focusKB=false;
+}
+function unlockScroll(){
+  if(!document.body.classList.contains('locked')) return;
+  document.body.classList.remove('locked');
+  if(appEl) appEl.scrollTop = savedScroll;
+}
+function applyViewportVar(){
+  rootEl.style.setProperty('--apph',appH+'px');
+  rootEl.style.setProperty('--kbh',kbH+'px');
+}
+function refreshKb(){
+  // 用即时读到的 kbRaw（而非延迟提交的 kbH）判断，非聚焦触发的键盘也能进入降载态
+  var next = (kbRaw>0) || focusKB;
+  if(next!==kbOpen){ kbOpen=next; document.body.classList.toggle('kb',next); }
+}
+
+/* ============ 键盘上移：只写 3 次 transform（预估 / 校正 / 归零）============
+   旧做法让 --shift 每帧更新，同时 .sheet 上挂着 .3s 的 transform transition：
+   每来一个新值就重启一次补间，弹层永远慢键盘半拍（滞后感），而且 --shift 是
+   html 上的自定义属性，每帧改一次 = 每帧一次整树样式重算。这就是"向上挤压时卡顿"。
+   新做法只在三个时刻各写一次 inline transform，中间交给那一次 transition 走完，
+   与系统键盘动画并行，视觉上同步。 */
+var SHEET_IDS=['sheet-detail','sheet-theme'];
+function activeSheet(){
+  // 倒序取：面板可能叠开（记一笔 → 全部类别 → 编辑类别），要的是最上面那个
+  for(var i=SHEET_IDS.length-1;i>=0;i--){
+    var el=document.getElementById(SHEET_IDS[i]);
+    if(el && el.classList.contains('show')) return el;
+  }
+  return null;
+}
+/* 上移策略：区分"系统键盘"与"自建键盘"，两者处理方式完全相反。
+   - 自建数字键盘是弹层自身的一部分，本来就贴在弹层最底部 —— 弹层不动它才在正确位置，
+     一动反而把它顶出屏幕。所以：没有真实输入框聚焦时，一律不位移。
+   - 系统键盘是浏览器绘制在页面之上的，弹层必须让位。让位量取整个键盘高度 kb，
+     让弹层底部正好落在键盘上沿、中间不留缝隙。
+     旧做法是按"输入框下沿是否被盖住"算最小位移：备注框没被盖住时算出来是 0，
+     弹层纹丝不动，底下那截就被系统键盘吞掉，并露出半透明遮罩下的底层页面
+     —— 这正是"露底"的来源。 */
+function targetShift(kb){
+  var el=activeSheet();
+  if(!el || !(kb>0)) return 0;
+  var a=document.activeElement;
+  var sysKb = a && (a.tagName==='INPUT'||a.tagName==='TEXTAREA') && el.contains(a);
+  if(!sysKb) return 0;
+  return Math.round(kb);
+}
+function applyShift(px){
+  px=px||0;
+  var el=activeSheet();
+  if(px===curShift) return;
+  var was=curShift;
+  curShift=px;
+  var el=activeSheet();
+  if(!el) return;
+  // 起落两端都算位移（0 → N 和 N → 0），都要摘掉毛玻璃采样
+  if(was!==0 || px!==0) el.classList.add('follow');
+  el.style.transform = px>0 ? 'translateY('+(-px)+'px)' : '';
+  scheduleClearFollow();
+}
+/* 位移走完再恢复毛玻璃。静止元素的 backdrop-filter 背后画面不变、不会逐帧重采样，
+   所以打字期间完全可以保留玻璃质感。 */
+function scheduleClearFollow(){
+  if(followT) clearTimeout(followT);
+  followT=setTimeout(function(){
+    followT=null;
+    Array.prototype.forEach.call(document.querySelectorAll('.sheet.follow'),function(n){
+      n.classList.remove('follow');
+    });
+  },320);
+}
+/* 首次弹键盘时还没有实测高度，按屏幕高度的 36% 估一个（主流手机键盘占比都在 33%~40%） */
+function estimateKb(){ return lastKbH>0 ? lastKbH : Math.round(appH*0.36); }
+
+/* 死区 6px：软键盘动画期间 visualViewport 会连续变化几十次，
+   逐帧改 CSS 变量 = 逐帧全量重排，是卡顿的主因。小于 6px 的抖动直接丢弃。 */
+/* --kbh 会改变 sheet 的 max-height，属于真实重排。软键盘动画期间读数连续变化几十次，
+   逐次提交 = 逐次重排一个带 backdrop-filter 的大面板 = 安卓闪屏。
+   对策：等键盘落定（150ms 无变化）后一次性提交，并量化到 48px 抑制读数抖动。 */
+var kbRaw=0, kbSettleT=null;
+function scheduleKbCommit(){
+  if(kbSettleT) clearTimeout(kbSettleT);
+  kbSettleT=setTimeout(function(){
+    kbSettleT=null;
+    if(kbRaw>=60){
+      var q=Math.round(kbRaw/48)*48;
+      if(q!==kbH){ kbH=q; applyViewportVar(); }
+      lastKbH=kbRaw;                 // 记住真实高度，下次 focusin 就能一步到位
+    }else if(kbH!==0){ kbH=0; applyViewportVar(); }
+    applyShift(targetShift(kbRaw));  // 用真实高度校正一次预估值
+    refreshKb();
+  },150);
+}
+
+/* 计算仍然每帧做（纯读数，很便宜），但只在"落定"这个时机才真正改样式 */
+function computeViewport(){
+  vpPending=false;
+  var vh = vv? vv.height : (window.innerHeight||appH);
+  var layoutH = window.innerHeight||vh;
+  var kb = appH - vh;        // 被软键盘吃掉的高度
+  if(kb<60) kb=0;
+  if(kb!==kbRaw){ kbRaw=kb; scheduleKbCommit(); }
+  // 键盘完全收起后布局高度才允许跟随，否则安卓会在键盘动画中途压缩界面。
+  // 同样要防抖：安卓地址栏收起/展开也会触发 resize，逐次跟随 = 滚动中反复整页重排。
+  if(kbRaw===0 && layoutH!==appH && Math.abs(layoutH-appH)>4) scheduleAppCommit(layoutH);
+  refreshKb();
+}
+var appSettleT=null;
+function scheduleAppCommit(h){
+  if(appSettleT) clearTimeout(appSettleT);
+  appSettleT=setTimeout(function(){
+    appSettleT=null;
+    if(kbRaw!==0) return;
+    var now=window.innerHeight||h;
+    if(now!==appH){ appH=now; applyViewportVar(); }
+  },220);
+}
+function syncViewport(){
+  if(vpPending) return;
+  vpPending=true;
+  (window.requestAnimationFrame||function(f){setTimeout(f,16);})(computeViewport);
+}
+if(vv){ vv.addEventListener('resize',syncViewport); vv.addEventListener('scroll',syncViewport); }
+window.addEventListener('resize',syncViewport);
+window.addEventListener('orientationchange',function(){
+  setTimeout(function(){
+    kbH=0; appH=window.innerHeight||appH;
+    applyViewportVar(); refreshKb(); resetShift();
+  },300);
+});
+applyViewportVar();
+
+/* 页面滚动（.app 内）时暂停背景动画，省掉每帧重采样 */
+var scrollPauseT=null;
+var bgPauseTarget = appEl || window;
+bgPauseTarget.addEventListener('scroll',function(){
+  document.body.classList.add('scrolling');
+  if(scrollPauseT) clearTimeout(scrollPauseT);
+  scrollPauseT=setTimeout(function(){ document.body.classList.remove('scrolling'); },220);
+},{passive:true});
+
+/* 聚焦即预置降载：比等 resize 检测早整整一个键盘动画，避免动画中途切状态造成闪烁。
+   注意这里不再调用 scrollIntoView —— 页面本身不可滚动，它只会把界面顶上去并触发平滑滚动动画。 */
+var kbBlurT=null;
+document.addEventListener('focusin',function(e){
+  var el=e.target;
+  if(!el || (el.tagName!=='INPUT' && el.tagName!=='TEXTAREA')) return;
+  if(kbBlurT){ clearTimeout(kbBlurT); kbBlurT=null; }
+  focusKB=true; refreshKb();
+  // 键盘动画的第 0 帧就按预估高度起步，弹层与系统键盘同时上升（而不是等落定后才追上去）
+  applyShift(targetShift(estimateKb()));
+  setTimeout(ensureInputVisible,260);
+});
+document.addEventListener('focusout',function(e){
+  var el=e.target;
+  if(!el || (el.tagName!=='INPUT' && el.tagName!=='TEXTAREA')) return;
+  if(kbBlurT) clearTimeout(kbBlurT);
+  kbBlurT=setTimeout(function(){
+    kbBlurT=null;
+    var a=document.activeElement;
+    if(a && (a.tagName==='INPUT'||a.tagName==='TEXTAREA')) return;
+    focusKB=false; refreshKb();
+    applyShift(0);
+  },280);
+});
+
+var sheetDetail=document.getElementById('sheet-detail');
+var mask=document.getElementById('mask');
+
+function showMask(){ lockScroll(); mask.classList.add('show'); }
+/* 面板收起时必须清掉 inline transform：它是写死在元素上的，
+   不清理的话下次打开会带着上一次的键盘位移出现。 */
+function resetShift(){
+  curShift=0;
+  if(followT){ clearTimeout(followT); followT=null; }
+  Array.prototype.forEach.call(document.querySelectorAll('.sheet'),function(n){
+    n.style.transform=''; n.classList.remove('follow');
+  });
+}
+function hideMask(){
+  if(document.getElementById('dlg').classList.contains('show')) return;
+  // 全屏页自己不透明、不需要遮罩，所以判断"是否还有弹层打开"时要把它排除掉，
+  // 否则关掉「全部类别」后遮罩会因为记一笔还开着而不消失，把全屏页压暗卡死。
+  var open = ['sheet-detail','sheet-theme'].some(function(id){
+    var el=document.getElementById(id); return el && el.classList.contains('show');
+  });
+  if(open) return;
+  mask.classList.remove('show');
+  blurActiveInput();
+  unlockScroll();
+  refreshKb(); resetShift();
+}
+
+/* ---------- 外观主题 ---------- */
+function openTheme(){ applyTheme(curTheme,false); sheetTheme.classList.add('show'); showMask(); }
+function closeTheme(){ sheetTheme.classList.remove('show'); hideMask(); }
+document.getElementById('rowTheme').addEventListener('click',openTheme);
+document.getElementById('thClose').addEventListener('click',closeTheme);
+Array.prototype.forEach.call(document.querySelectorAll('.thcard'),function(b){
+  b.addEventListener('click',function(){
+    var t=b.getAttribute('data-th');
+    applyTheme(t);
+    cssvFlush();        // 图表色值是缓存的，必须失效后用新主题重绘
+    renderStat();
+    toast('已切换到'+THEMES[t].n);
+  });
+});
+mask.addEventListener('click',function(){
+  if(document.getElementById('dlg').classList.contains('show')) return;
+  if(sheetTheme.classList.contains('show')){ closeTheme(); return; }
+  closeDetail();
+});
+
+
+document.getElementById('fab').addEventListener('click',function(){ location.href='add.html'; });
+
+/* ---------- 记录详情 ---------- */
+var detailId=null;
+function openDetail(id){
+  var r=null; for(var i=0;i<data.length;i++){ if(data[i].id===id) r=data[i]; }
+  if(!r) return;
+  detailId=id;
+  var c=catOf(r.type,r.cat);
+  var card=document.getElementById('dCard');
+  card.style.background='linear-gradient(145deg,'+c.weak+',var(--w50))';
+  document.getElementById('dIco').textContent=c.c;
+  document.getElementById('dIco').style.color=c.color;
+  document.getElementById('dName').textContent=c.n;
+  document.getElementById('dNote').textContent=r.note||'无备注';
+  document.getElementById('dAmt').textContent=money(r.type==='income'?r.amount:-r.amount);
+  document.getElementById('dAmt').style.color=r.type==='income'?'var(--income)':'var(--expense)';
+  document.getElementById('dCat').textContent=c.n+' · '+(r.type==='income'?'收入':'支出');
+  document.getElementById('dDate').textContent=r.date;
+  document.getElementById('dNote2').textContent=r.note||'—';
+  sheetDetail.classList.add('show'); showMask();
+}
+function closeDetail(){ sheetDetail.classList.remove('show'); hideMask(); }
+document.getElementById('detailEdit').addEventListener('click',function(){
+  var r=null; for(var i=0;i<data.length;i++){ if(data[i].id===detailId) r=data[i]; }
+  closeDetail(); if(r) location.href='add.html?id='+encodeURIComponent(r.id);
+});
+document.getElementById('dSaveEdit').addEventListener('click',function(){ document.getElementById('detailEdit').click(); });
+document.getElementById('dDelete').addEventListener('click',function(){
+  document.getElementById('dlg').classList.add('show');
+});
+document.getElementById('dlgCancel').addEventListener('click',function(){
+  document.getElementById('dlg').classList.remove('show');
+});
+document.getElementById('dlgOk').addEventListener('click',function(){
+  data=data.filter(function(r){return r.id!==detailId;});
+  save(); document.getElementById('dlg').classList.remove('show'); closeDetail();
+  renderAll(); toast('已删除');
+});
+
+/* ---------- 我的：导出 / 导入 / 清空 ---------- */
+document.getElementById('rowExport').addEventListener('click',function(){
+  if(!data.length){ toast('暂无数据'); return; }
+  var head='日期,类型,类别,金额,备注\n';
+  var body=data.slice().sort(function(a,b){return a.date<b.date?-1:1;}).map(function(r){
+    var c=catOf(r.type,r.cat);
+    return [r.date, r.type==='income'?'收入':'支出', c.n, (r.type==='income'?r.amount:-r.amount), '"'+String(r.note||'').replace(/"/g,'""')+'"'].join(',');
+  }).join('\n');
+  var blob=new Blob(['\ufeff'+head+body],{type:'text/csv;charset=utf-8'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='记账本备份-'+todayISO()+'.csv';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },500);
+  toast('已导出 CSV');
+});
+document.getElementById('rowImport').addEventListener('click',function(){
+  document.getElementById('fileInput').click();
+});
+document.getElementById('fileInput').addEventListener('change',function(e){
+  var f=e.target.files&&e.target.files[0]; if(!f) return;
+  var fr=new FileReader();
+  fr.onload=function(){
+    try{
+      var lines=String(fr.result).replace(/^\ufeff/,'').split(/\r?\n/).slice(1);
+      var added=0;
+      lines.forEach(function(line){
+        if(!line.trim()) return;
+        var p=line.match(/^([^,]+),([^,]+),([^,]+),([^,]+),(.*)$/);
+        if(!p) return;
+        var date=p[1].trim(), type=p[2].trim()==='收入'?'income':'expense';
+        var catName=p[3].trim(), amount=parseFloat(p[4]);
+        var note=p[5].replace(/^"|"$/g,'').replace(/""/g,'"');
+        if(!date||!isFinite(amount)) return;
+        var arr=catArr(type), cid=null;
+        arr.forEach(function(c){ if(c.n===catName) cid=c.id; });
+        if(!cid) cid=arr[arr.length-1].id;
+        data.push({id:uid(),type:type,amount:Math.abs(amount),cat:cid,note:note,date:date,ts:Date.now()});
+        added++;
+      });
+      save(); renderAll(); toast('已导入 '+added+' 笔');
+    }catch(err){ toast('导入失败：文件格式不正确'); }
+  };
+  fr.readAsText(f,'utf-8');
+  e.target.value='';
+});
+document.getElementById('rowDemo').addEventListener('click',function(){
+  var n=loadDemo();
+  renderAll(); toast('已载入 '+n+' 笔示例数据');
+});
+document.getElementById('rowClear').addEventListener('click',function(){
+  if(confirm('确定清空全部记录？该操作不可恢复。')){
+    data=[]; save(); renderAll(); toast('已清空');
+  }
+});
+/* ---------- 类别管理：独立页面 cat.html ----------
+   原来在弹层里做，而弹层 + 软键盘正是之前那一串 BUG 的来源，改为跳转独立页面。 */
+document.getElementById('rowCat').addEventListener('click',function(){ location.href='cat.html'; });
+
+/* ---------- 时间导航 ---------- */
+document.getElementById('prevMonth').addEventListener('click',function(){ cur.setMonth(cur.getMonth()-1); renderAll(); });
+document.getElementById('nextMonth').addEventListener('click',function(){ cur.setMonth(cur.getMonth()+1); renderAll(); });
+document.getElementById('prevStatMonth').addEventListener('click',function(){ cur.setMonth(cur.getMonth()-1); renderAll(); });
+document.getElementById('nextStatMonth').addEventListener('click',function(){ cur.setMonth(cur.getMonth()+1); renderAll(); });
+document.getElementById('prevDay').addEventListener('click',function(){ dayCur.setDate(dayCur.getDate()-1); renderStat(); });
+document.getElementById('nextDay').addEventListener('click',function(){ dayCur.setDate(dayCur.getDate()+1); renderStat(); });
+document.getElementById('prevYear').addEventListener('click',function(){ statYear--; renderStat(); });
+document.getElementById('nextYear').addEventListener('click',function(){ statYear++; renderStat(); });
+
+function renderAll(){ renderDetail(); renderStat(); renderMe(); }
+
+/* ---------- init ---------- */
+/* 先恢复主题再渲染：图表绘制时会读主题色，顺序反了会用错色 */
+(function(){
+  var t='glass';
+  try{ var s=localStorage.getItem('local_ledger_theme'); if(s) t=s; }catch(e){}
+  applyTheme(t,false);
+})();
+loadCats(); load(); loadFilter(); renderAll(); showTab('detail');
+/* 记一笔在独立页面完成。返回首页时浏览器可能直接恢复缓存中的本页（bfcache），
+   脚本不会重跑，数据看着就像没保存。用一个版本号标记"数据已变更"，回来时重读再渲染。 */
+var lastDirty='';
+function syncFromStore(){
+  var d='';
+  try{ d=localStorage.getItem('local_ledger_dirty')||''; }catch(e){}
+  if(d===lastDirty) return;
+  lastDirty=d; loadCats(); load(); loadFilter(); renderAll();
+}
+window.addEventListener('pageshow',syncFromStore);
+window.addEventListener('visibilitychange',function(){ if(!document.hidden) syncFromStore(); });
+window.addEventListener('resize',function(){
+  if(document.getElementById('page-stat').classList.contains('active')) renderStat();
+});
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){ navigator.serviceWorker.register('sw.js').catch(function(){}); });
+}
+})();
+</script>
+</body>
+</html>

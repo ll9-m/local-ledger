@@ -1,0 +1,12 @@
+{
+  "name": "本地记账本",
+  "short_name": "记账本",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EDF1F9",
+  "theme_color": "#2A6BFF",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

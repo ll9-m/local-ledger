@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- 独立页面 + 普通文档流：软键盘由浏览器原生处理，不做任何 JS 高度补偿。
+     之前所有卡顿/闪烁都来自"覆盖层贴屏幕底、键盘也贴屏幕底"这个死结，
+     独立页面从根上没有这个问题。 -->
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-visual">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="记账本">
+<meta name="theme-color" content="#EDF1F9">
+<link rel="manifest" href="manifest.json">
+<title>记一笔 · 本地记账本</title>
+<script>
+/* 首屏前同步应用已保存的主题，避免深色用户看到一帧白底 */
+(function(){
+  try{
+    var t=localStorage.getItem('local_ledger_theme');
+    if(t==='light'||t==='dark'||t==='glass') document.documentElement.setAttribute('data-theme',t);
+  }catch(e){}
+})();
+</script>
+<link rel="stylesheet" href="app.css">
+<style>
+/* app.css 为了让首页不滚动，把 html/body 锁成了 height:100% + overflow:hidden。
+   这里是独立页面，必须放开：页面能滚，浏览器才会自动把聚焦的输入框顶到键盘上方。 */
+html,body{height:auto!important;min-height:100%;overflow:visible!important;overscroll-behavior-y:auto;}
+.addwrap{position:relative;z-index:1;max-width:430px;margin:0 auto;padding:0 16px calc(40px + env(safe-area-inset-bottom,0px));}
+.phead{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;
+  min-height:52px;padding:env(safe-area-inset-top,0px) 4px 0;margin:0 -16px;
+  background:var(--bg);box-shadow:0 1px 0 var(--l6);}
+.phead .ph-t{font-size:17px;font-weight:700;}
+.phead .ph-cancel{font-size:15px;color:var(--t2);padding:8px 6px;}
+.phead .ph-ok{font-size:15px;font-weight:700;color:#fff;padding:7px 15px;border-radius:14px;
+  background:linear-gradient(145deg,var(--btn-a),var(--btn-b));box-shadow:0 4px 14px rgba(26,82,224,.3);}
+.phead .ph-ok:active{transform:scale(.96);}
+/* 金额用系统输入法输入：右对齐的大号数字，看起来和原来的显示块一致 */
+.amtcard input.v{width:100%;text-align:right;border:0;outline:none;background:transparent;
+  font-family:inherit;color:var(--t1);padding:0;}
+.amtcard input.v::placeholder{color:var(--t4);}
+input{-webkit-appearance:none;appearance:none;border:0;background:transparent;font-family:inherit;font-size:15px;color:var(--t1);}
+input[type="date"]{-webkit-appearance:none;appearance:none;min-height:22px;}
+.tip{margin:14px 4px 0;font-size:12px;color:var(--t3);line-height:1.6;}
+#catGridAll{display:none;margin-top:4px;}
+#catGridAll.show{display:grid;}
+</style>
+</head>
+<body>
+<div class="bgfx"><i class="b b1"></i><i class="b b2"></i><i class="b b3"></i><i class="b b4"></i></div>
+
+<div class="addwrap">
+  <div class="phead">
+    <button class="ph-cancel" id="aCancel">取消</button>
+    <span class="ph-t" id="aTitle">记一笔</span>
+    <button class="ph-ok" id="aSave">保存</button>
+  </div>
+
+  <div class="seg" id="typeSeg" style="margin-top:12px;">
+    <button class="on exp" data-type="expense">支出</button>
+    <button data-type="income">收入</button>
+  </div>
+
+  <div class="amtcard" style="margin-top:10px;">
+    <div class="lab">金额</div>
+    <div class="row">
+      <span class="y">¥</span>
+      <input id="amtInput" class="v" type="text" inputmode="decimal" enterkeyhint="done"
+             placeholder="0.00" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    </div>
+  </div>
+
+  <div class="sechdr"><span class="t">类别</span><span class="m" id="catMore">全部 ›</span></div>
+  <div class="grid one" id="catGrid"></div>
+  <div class="grid" id="catGridAll"></div>
+
+  <div class="wrap">
+    <div class="frow"><span class="l">备注</span><input class="v" id="noteInput" placeholder="点击添加备注…" maxlength="40" enterkeyhint="done" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"><span class="c">›</span></div>
+    <div class="frow"><span class="l">日期</span><input class="v filled" id="dateInput" type="date" enterkeyhint="done"><span class="c">›</span></div>
+  </div>
+
+  <div class="tip">金额直接用手机输入法输入，最多两位小数。<br>按键盘上的「完成 / 回车」或点空白处收起键盘。</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="store.js"></script>
+<script>
+(function(){
+'use strict';
+
+var editingId=null, curType='expense', curCat=null;
+var amtInput=document.getElementById('amtInput');
+var noteInput=document.getElementById('noteInput');
+var dateInput=document.getElementById('dateInput');
+
+/* ---------- 初始化 ---------- */
+(function(){
+  var t='glass';
+  try{ var s=localStorage.getItem('local_ledger_theme'); if(s) t=s; }catch(e){}
+  applyTheme(t,false);
+})();
+loadCats(); load();
+
+var q=location.search||'';
+var m=/[?&]id=([^&]+)/.exec(q);
+var rec=null;
+if(m){
+  try{ editingId=decodeURIComponent(m[1]); }catch(e){ editingId=m[1]; }
+  for(var i=0;i<data.length;i++){ if(data[i].id===editingId){ rec=data[i]; break; } }
+  if(!rec) editingId=null;
+}
+curType = rec? rec.type : 'expense';
+curCat  = rec? rec.cat  : catArr('expense')[0].id;
+document.getElementById('aTitle').textContent = rec? '编辑记录' : '记一笔';
+document.getElementById('aSave').textContent  = rec? '保存修改' : '保存';
+amtInput.value  = rec? String(Math.abs(rec.amount)) : '';
+noteInput.value = rec? (rec.note||'') : '';
+dateInput.value = rec? rec.date : todayISO();
+syncTypeSeg(); renderCatGrid(); renderCatAll();
+
+/* ---------- 收起键盘 ---------- */
+function hideKeyboard(){
+  var a=document.activeElement;
+  if(a && (a.tagName==='INPUT'||a.tagName==='TEXTAREA')){ try{ a.blur(); }catch(e){} }
+}
+function goHome(){
+  hideKeyboard();
+  location.replace('index.html');
+}
+document.getElementById('aCancel').addEventListener('click',goHome);
+/* 回车即收键盘：金额输完直接保存，备注输完只是收起 */
+function onEnter(e){
+  if(e.key!=='Enter' && e.keyCode!==13) return;
+  e.preventDefault();
+  hideKeyboard();
+}
+[amtInput,noteInput,dateInput].forEach(function(el){ el.addEventListener('keydown',onEnter); });
+
+/* 键盘弹出后的一次性兜底：页面是文档流、浏览器本就会滚，
+   个别机型在 safe-area 下会差几十像素，这里只补一次，不逐帧跟随。 */
+function keepVisible(){
+  var a=document.activeElement;
+  if(!a || (a.tagName!=='INPUT'&&a.tagName!=='TEXTAREA')) return;
+  var vh=(window.visualViewport && window.visualViewport.height) || window.innerHeight;
+  var r=a.getBoundingClientRect();
+  if(!r || !r.bottom) return;
+  var over=r.bottom-(vh-16);
+  if(over>0 && window.scrollBy){ try{ window.scrollBy(0,over+8); }catch(e){} }
+}
+document.addEventListener('focusin',function(e){
+  var t=e.target;
+  if(!t || (t.tagName!=='INPUT'&&t.tagName!=='TEXTAREA')) return;
+  setTimeout(keepVisible,320);
+});
+
+/* ---------- 金额：只接受数字与一个小数点，最多两位 ---------- */
+function sanitize(v){
+  v=String(v||'').replace(/[^\d.]/g,'');
+  var i=v.indexOf('.');
+  if(i>=0) v=v.slice(0,i+1)+v.slice(i+1).replace(/\./g,'').slice(0,2);
+  if(v.length>10) v=v.slice(0,10);
+  return v;
+}
+amtInput.addEventListener('input',function(){
+  var v=sanitize(this.value);
+  if(v!==this.value) this.value=v;
+});
+
+/* ---------- 收支类型 ---------- */
+function syncTypeSeg(){
+  Array.prototype.forEach.call(document.querySelectorAll('#typeSeg button'),function(b){
+    b.className = b.getAttribute('data-type')===curType ? ('on '+(curType==='income'?'inc':'exp')) : '';
+  });
+}
+Array.prototype.forEach.call(document.querySelectorAll('#typeSeg button'),function(b){
+  b.addEventListener('click',function(){
+    hideKeyboard();
+    curType=b.getAttribute('data-type'); curCat=catArr(curType)[0].id;
+    syncTypeSeg(); renderCatGrid(); renderCatAll();
+  });
+});
+
+/* ---------- 类别 ---------- */
+function tileHTML(c,on){
+  return '<button class="tile'+(on?' on':'')+'" data-cat="'+c.id+'" style="'+(on?'color:'+c.color+';background:'+c.weak:'')+'">'+
+    '<span class="ci" style="background:'+c.weak+';color:'+c.color+'">'+c.c+'</span>'+
+    '<span class="cn"'+(on?' style="color:'+c.color+'"':'')+'>'+c.n+'</span></button>';
+}
+function bindTiles(box){
+  Array.prototype.forEach.call(box.querySelectorAll('.tile'),function(t){
+    t.addEventListener('click',function(){
+      hideKeyboard();
+      curCat=t.getAttribute('data-cat');
+      renderCatGrid(); renderCatAll();
+    });
+  });
+}
+function renderCatGrid(){
+  var box=document.getElementById('catGrid');
+  var all=catArr(curType);
+  var custom=all.filter(function(c){return !c.builtin;});
+  var builtin=all.filter(function(c){return c.builtin;});
+  var arr=custom.slice(0,4).concat(builtin).slice(0,10);
+  box.innerHTML=arr.map(function(c){ return tileHTML(c,c.id===curCat); }).join('');
+  bindTiles(box);
+  var on=box.querySelector('.tile.on');
+  if(on){
+    var target=on.offsetLeft-(box.clientWidth-on.offsetWidth)/2;
+    var max=box.scrollWidth-box.clientWidth;
+    if(target<0) target=0;
+    if(target>max) target=max;
+    try{ box.scrollLeft=target; }catch(e){}
+  }
+}
+function renderCatAll(){
+  var box=document.getElementById('catGridAll');
+  box.innerHTML=catArr(curType).map(function(c){ return tileHTML(c,c.id===curCat); }).join('');
+  bindTiles(box);
+}
+/* 「全部」在本页展开，不用弹层 —— 弹层 + 键盘正是之前反复出问题的组合 */
+document.getElementById('catMore').addEventListener('click',function(){
+  hideKeyboard();
+  var box=document.getElementById('catGridAll');
+  var open=box.classList.toggle('show');
+  this.textContent = open? '收起 ‹' : '全部 ›';
+});
+document.querySelector('.addwrap').addEventListener('click',function(e){
+  if(e.target.closest && e.target.closest('.phead,.seg,.tile,.amtcard,.wrap,input')) return;
+  hideKeyboard();
+});
+
+/* ---------- 保存 ---------- */
+document.getElementById('aSave').addEventListener('click',function(){
+  hideKeyboard();
+  var amount=parseFloat(sanitize(amtInput.value));
+  if(!(amount>0)){ toast('请输入大于 0 的金额'); amtInput.focus(); return; }
+  var date=dateInput.value||todayISO();
+  var note=noteInput.value.trim();
+  amount=Math.round(amount*100)/100;
+  if(editingId){
+    for(var i=0;i<data.length;i++){
+      if(data[i].id===editingId){
+        data[i].type=curType; data[i].amount=amount; data[i].cat=curCat; data[i].note=note; data[i].date=date;
+        break;
+      }
+    }
+  }else{
+    data.push({id:uid(),type:curType,amount:amount,cat:curCat,note:note,date:date,ts:Date.now()});
+  }
+  save();
+  // 标记数据已变更：首页可能从 bfcache 直接恢复，靠它决定要不要重读
+  try{ localStorage.setItem('local_ledger_dirty',String(Date.now())); }catch(e){}
+  goHome();
+});
+
+/* 新建时把光标放在金额上（移动端通常需要一次点击才会弹键盘，放这里只是省一步） */
+if(!rec){ setTimeout(function(){ try{ amtInput.focus(); }catch(e){} },120); }
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){ navigator.serviceWorker.register('sw.js').catch(function(){}); });
+}
+})();
+</script>
+</body>
+</html>
