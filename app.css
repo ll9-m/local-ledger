@@ -200,9 +200,14 @@ input{font-family:inherit;border:0;outline:none;background:transparent;color:inh
 
 /* ---------- 列表 ---------- */
 .daygroup{margin-top:16px;}
-.dayhdr{display:flex;align-items:center;justify-content:space-between;margin:0 4px 8px;}
+/* 日期行可点击折叠/展开：收起时只渲染这一行文字（笔数·收·支），
+   当天明细首次展开时才进 DOM，大账本不再整月全量渲染 */
+.dayhdr{display:flex;align-items:center;justify-content:flex-start;margin:0 4px 8px;cursor:pointer;user-select:none;-webkit-user-select:none;}
 .dayhdr .d{font-size:13px;font-weight:700;color:var(--l55);}
-.dayhdr .s{font-size:12px;color:var(--t3);font-weight:500;}
+.dayhdr .s{font-size:12px;color:var(--t3);font-weight:500;margin-left:auto;padding-right:8px;white-space:nowrap;}
+.dayhdr .darrow{font-style:normal;font-size:13px;font-weight:700;color:var(--t4);flex:0 0 auto;line-height:1;transition:transform .2s ease;}
+.daygroup.open .dayhdr .darrow{transform:rotate(90deg);}
+.daygroup:not(.open) .daycard{display:none;}
 .daycard{border-radius:var(--r-md);overflow:hidden;
   background:var(--w52);-webkit-backdrop-filter:var(--bf4);backdrop-filter:var(--bf4);
   box-shadow:0 6px 20px var(--s8),inset 0 1px 0 var(--w85);}
@@ -390,6 +395,8 @@ canvas{width:100%;display:block;}
 .dlg .br button{flex:1;height:46px;border-radius:23px;font-size:15px;font-weight:700;}
 .dlg .br .c{background:var(--l7);color:var(--t1);}
 .dlg .br .k{background:linear-gradient(145deg,#FF6B73,#E8434F);color:#fff;box-shadow:0 6px 16px rgba(232,67,79,.34),inset 0 1px 0 var(--w40);}
+/* 备份提醒弹窗的确认按钮用收入绿，与删除的警示红区分开 */
+.dlg .br .g{background:linear-gradient(145deg,#2BC98A,#00A06B);color:#fff;box-shadow:0 6px 16px rgba(0,160,107,.30),inset 0 1px 0 rgba(255,255,255,.25);}
 
 /* ---------- 类别管理 ---------- */
 .cmlist{flex:1 1 auto;min-height:120px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;margin-top:12px;border-radius:var(--r-md);

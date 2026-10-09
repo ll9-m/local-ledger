@@ -179,9 +179,9 @@
       <div class="setrow" id="rowImport"><span class="l">导入数据</span><span class="v">从 CSV 恢复</span><span class="c">›</span></div>
       <div class="setrow" id="rowDemo"><span class="l">载入示例数据</span><span class="v">想先看看效果时用</span><span class="c">›</span></div>
       <div class="setrow" id="rowClear"><span class="l" style="color:var(--expense)">清空全部数据</span><span class="v dg">不可恢复</span><span class="c">›</span></div>
-      <div class="setrow"><span class="l">关于记账本</span><span class="v">v2.0.0</span></div>
+      <div class="setrow"><span class="l">关于记账本</span><span class="v">v2.1.0</span></div>
     </div>
-    <div class="ver">记账本 v2.0.0 · 本地版</div>
+    <div class="ver">记账本 v2.1.0 · 本地版</div>
   </section>
 
   <div class="tail-space"></div>
@@ -254,6 +254,13 @@
   <div class="br"><button class="c" id="dlgCancel">取消</button><button class="k" id="dlgOk">确认删除</button></div>
 </div>
 
+<!-- ============ 每周一备份提醒 ============ -->
+<div class="dlg" id="dlgBackup">
+  <div class="t">每周备份提醒</div>
+  <div class="d">今天是周一，建议导出一份 CSV 备份，<br>避免换机或数据意外丢失时找不回来。</div>
+  <div class="br"><button class="c" id="bkLater">知道了</button><button class="g" id="bkNow">立即备份</button></div>
+</div>
+
 <div class="toast" id="toast"></div>
 <input type="file" id="fileInput" accept=".csv,text/csv" style="display:none">
 
@@ -291,6 +298,26 @@ document.getElementById('fbar').addEventListener('click',function(){
 });
 
 /* ---------- render: 明细 ---------- */
+/* 按日期折叠：整月全量渲染是启动卡顿的根源。现在每个日期只渲染一行文字
+   （笔数 · 收 · 支），当天明细在首次展开时才真正进 DOM（懒加载）；
+   启动时仅自动展开最近 2 天。筛选逻辑完全不变，折叠只作用于展示层。 */
+var expandedDays={};     // 已展开的日期集合
+var lastSeedSig=null;    // 上次自动展开时的视图签名（月份+筛选），用于判断何时重新播种
+var curGroups={};        // 当前列表按日分组缓存，供懒展开时取当天数据
+
+function recHtmlOf(r){
+  var c=catOf(r.type,r.cat);
+  var col=r.type==='income'?'var(--income)':'var(--expense)';
+  return '<div class="rec" data-id="'+r.id+'">'+
+    '<div class="ico" style="background:'+c.weak+';color:'+c.color+'">'+c.c+'</div>'+
+    '<div class="mid"><div class="n">'+esc(c.n)+'</div><div class="m">'+esc(r.note||'无备注')+'</div></div>'+
+    '<div class="a" style="color:'+col+'">'+money(r.type==='income'?r.amount:-r.amount)+'</div></div>';
+}
+function bindRecs(scope){
+  Array.prototype.forEach.call(scope.querySelectorAll('.rec'),function(el){
+    el.addEventListener('click',function(){ openDetail(el.getAttribute('data-id')); });
+  });
+}
 function renderDetail(){
   document.getElementById('curMonth').textContent=cur.getFullYear()+'年'+(cur.getMonth()+1)+'月';
   var msAll=data.filter(function(r){return inMonth(r,cur);});
@@ -316,6 +343,18 @@ function renderDetail(){
   var groups={};
   ms.forEach(function(r){ (groups[r.date]=groups[r.date]||[]).push(r); });
   var keys=Object.keys(groups).sort().reverse();
+  curGroups=groups;
+  /* 自动展开最近 2 天的时机：首次渲染、切换月份、筛选条件变化、
+     或当前视图里一个展开的日期都没有（如刚载入示例数据）。
+     其余重渲染（增删改记录、从记一笔返回）保留用户手动展开的状态。 */
+  var sig=monthKey(cur)+'|'+(filterOn()?JSON.stringify(filter):'');
+  var anyOpen=keys.some(function(k){ return expandedDays[k]; });
+  if(lastSeedSig!==sig || !anyOpen){
+    expandedDays={};
+    keys.slice(0,2).forEach(function(k){ expandedDays[k]=true; });
+    lastSeedSig=sig;
+  }
+
   var box=document.getElementById('list');
   if(!keys.length){
     box.innerHTML = filterOn()
@@ -327,21 +366,28 @@ function renderDetail(){
   keys.forEach(function(k){
     var arr=groups[k].slice().sort(function(a,b){return (b.ts||0)-(a.ts||0);});
     var g=sumOf(arr);
-    html+='<div class="daygroup"><div class="dayhdr"><span class="d">'+esc(dayLabel(k))+'</span>'+
-          '<span class="s">收 '+money(g.inc)+' · 支 '+money(g.exp)+'</span></div><div class="daycard">';
-    arr.forEach(function(r){
-      var c=catOf(r.type,r.cat);
-      var col=r.type==='income'?'var(--income)':'var(--expense)';
-      html+='<div class="rec" data-id="'+r.id+'">'+
-        '<div class="ico" style="background:'+c.weak+';color:'+c.color+'">'+c.c+'</div>'+
-        '<div class="mid"><div class="n">'+esc(c.n)+'</div><div class="m">'+esc(r.note||'无备注')+'</div></div>'+
-        '<div class="a" style="color:'+col+'">'+money(r.type==='income'?r.amount:-r.amount)+'</div></div>';
-    });
-    html+='</div></div>';
+    var open=!!expandedDays[k];
+    html+='<div class="daygroup'+(open?' open':'')+'" data-date="'+k+'">'+
+      '<div class="dayhdr"><span class="d">'+esc(dayLabel(k))+'</span>'+
+      '<span class="s">'+arr.length+' 笔 · 收 '+money(g.inc)+' · 支 '+money(g.exp)+'</span>'+
+      '<i class="darrow">›</i></div>'+
+      '<div class="daycard">'+(open?arr.map(recHtmlOf).join(''):'')+'</div></div>';
   });
   box.innerHTML=html;
-  Array.prototype.forEach.call(box.querySelectorAll('.rec'),function(el){
-    el.addEventListener('click',function(){ openDetail(el.getAttribute('data-id')); });
+  bindRecs(box);
+  /* 日期行点击：展开/收起。收起的天数不占 DOM；展开时若当天明细还没渲染过，当场补上 */
+  Array.prototype.forEach.call(box.querySelectorAll('.daygroup'),function(gEl){
+    gEl.querySelector('.dayhdr').addEventListener('click',function(){
+      var k=gEl.getAttribute('data-date');
+      if(expandedDays[k]){ delete expandedDays[k]; gEl.classList.remove('open'); return; }
+      expandedDays[k]=true; gEl.classList.add('open');
+      var card=gEl.querySelector('.daycard');
+      if(card && !card.children.length){
+        var day=(curGroups[k]||[]).slice().sort(function(a,b){return (b.ts||0)-(a.ts||0);});
+        card.innerHTML=day.map(recHtmlOf).join('');
+        bindRecs(card);
+      }
+    });
   });
 }
 
@@ -786,6 +832,7 @@ function resetShift(){
 }
 function hideMask(){
   if(document.getElementById('dlg').classList.contains('show')) return;
+  if(dlgBackup && dlgBackup.classList.contains('show')) return;
   // 全屏页自己不透明、不需要遮罩，所以判断"是否还有弹层打开"时要把它排除掉，
   // 否则关掉「全部类别」后遮罩会因为记一笔还开着而不消失，把全屏页压暗卡死。
   var open = ['sheet-detail','sheet-theme'].some(function(id){
@@ -814,6 +861,7 @@ Array.prototype.forEach.call(document.querySelectorAll('.thcard'),function(b){
 });
 mask.addEventListener('click',function(){
   if(document.getElementById('dlg').classList.contains('show')) return;
+  if(dlgBackup && dlgBackup.classList.contains('show')){ closeBackupDlg(); return; }
   if(sheetTheme.classList.contains('show')){ closeTheme(); return; }
   closeDetail();
 });
@@ -860,7 +908,7 @@ document.getElementById('dlgOk').addEventListener('click',function(){
 });
 
 /* ---------- 我的：导出 / 导入 / 清空 ---------- */
-document.getElementById('rowExport').addEventListener('click',function(){
+function exportCSV(){
   if(!data.length){ toast('暂无数据'); return; }
   var head='日期,类型,类别,金额,备注\n';
   var body=data.slice().sort(function(a,b){return a.date<b.date?-1:1;}).map(function(r){
@@ -873,8 +921,30 @@ document.getElementById('rowExport').addEventListener('click',function(){
   a.download='记账本备份-'+todayISO()+'.csv';
   document.body.appendChild(a); a.click();
   setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },500);
+  markBackedUp();                        // 周一导出过就不再弹提醒
   toast('已导出 CSV');
-});
+}
+document.getElementById('rowExport').addEventListener('click',exportCSV);
+
+/* ---------- 每周一备份提醒 ----------
+   本应用是纯本地离线应用，无法在未打开时推送通知，
+   所以采用「周一打开应用时弹一次」的策略：当天提醒过或已导出过就不再打扰。 */
+var dlgBackup=document.getElementById('dlgBackup');
+var BKKEY='local_ledger_backup_last';
+function markBackedUp(){ try{ localStorage.setItem(BKKEY,todayISO()); }catch(e){} }
+function closeBackupDlg(){ dlgBackup.classList.remove('show'); hideMask(); }
+document.getElementById('bkLater').addEventListener('click',closeBackupDlg);
+document.getElementById('bkNow').addEventListener('click',function(){ closeBackupDlg(); exportCSV(); });
+function checkBackupReminder(){
+  try{
+    var now=new Date();
+    if(now.getDay()!==1) return;                          // 只在周一提醒
+    if(!data.length) return;                              // 没有数据就不打扰
+    if(localStorage.getItem(BKKEY)===todayISO()) return;  // 当天已提醒/已备份
+    markBackedUp();                                       // 当天只提醒一次
+    setTimeout(function(){ dlgBackup.classList.add('show'); showMask(); },900);
+  }catch(e){}
+}
 document.getElementById('rowImport').addEventListener('click',function(){
   document.getElementById('fileInput').click();
 });
@@ -938,6 +1008,7 @@ function renderAll(){ renderDetail(); renderStat(); renderMe(); }
   applyTheme(t,false);
 })();
 loadCats(); load(); loadFilter(); renderAll(); showTab('detail');
+checkBackupReminder();   // 数据加载完再检查：周一且当天没备份过才弹提醒
 /* 记一笔在独立页面完成。返回首页时浏览器可能直接恢复缓存中的本页（bfcache），
    脚本不会重跑，数据看着就像没保存。用一个版本号标记"数据已变更"，回来时重读再渲染。 */
 var lastDirty='';

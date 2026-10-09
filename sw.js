@@ -1,4 +1,4 @@
-var CACHE = 'local-ledger-v15';
+var CACHE = 'local-ledger-v16';
 var ASSETS = ['./', './index.html', './add.html', './cat.html', './manage.html', './app.css', './store.js', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', function (e) {
