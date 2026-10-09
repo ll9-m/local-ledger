@@ -176,7 +176,10 @@
       <div class="setrow" id="rowTheme"><span class="l">外观主题</span><span class="v" id="themeVal">毛玻璃</span><span class="c">›</span></div>
       <div class="setrow" id="rowCat"><span class="l">类别管理</span><span class="v">支出 12 · 收入 6</span><span class="c">›</span></div>
       <div class="setrow" id="rowExport"><span class="l">导出数据</span><span class="v">CSV 备份到本机</span><span class="c">›</span></div>
-      <div class="setrow" id="rowImport"><span class="l">导入数据</span><span class="v">从 CSV 恢复</span><span class="c">›</span></div>
+      <!-- 用原生 label 关联文件框：不靠 JS 去 click()，
+           iOS Safari / 安卓 WebView 对「程序化点击隐藏 input」会直接拒绝，
+           原生 label 激活走的是浏览器的真实用户手势，最可靠 -->
+      <label class="setrow" id="rowImport" for="fileInput"><span class="l">导入数据</span><span class="v">从 CSV 恢复</span><span class="c">›</span></label>
       <div class="setrow" id="rowDemo"><span class="l">载入示例数据</span><span class="v">想先看看效果时用</span><span class="c">›</span></div>
       <div class="setrow" id="rowClear"><span class="l" style="color:var(--expense)">清空全部数据</span><span class="v dg">不可恢复</span><span class="c">›</span></div>
       <div class="setrow"><span class="l">关于记账本</span><span class="v">v2.1.0</span></div>
@@ -262,7 +265,11 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<input type="file" id="fileInput" accept=".csv,text/csv" style="display:none">
+<!-- 文件框不能 display:none：iOS 会因此拒绝唤起系统选择器，改用视觉隐藏（仍在布局中）。
+     accept 放宽到 csv/txt/各种常见 MIME，安卓的文件选择器对不匹配类型会直接置灰，
+     放宽后用户至少能选中文件，内容不对再由页面提示。 -->
+<input type="file" id="fileInput" class="vhide"
+  accept=".csv,text/csv,text/comma-separated-values,application/vnd.ms-excel,text/plain,.txt">
 
 <script src="store.js"></script>
 <script>
@@ -945,11 +952,12 @@ function checkBackupReminder(){
     setTimeout(function(){ dlgBackup.classList.add('show'); showMask(); },900);
   }catch(e){}
 }
-document.getElementById('rowImport').addEventListener('click',function(){
-  document.getElementById('fileInput').click();
-});
+/* 导入入口是 <label for="fileInput">，点击由浏览器原生唤起选择器 —— 这里不再写 JS click()，
+   否则一次点击会连着触发两次（label 合成一次 + JS 一次），部分机型会弹两遍选择框。 */
 document.getElementById('fileInput').addEventListener('change',function(e){
-  var f=e.target.files&&e.target.files[0]; if(!f) return;
+  var input=e.target;
+  var f=input.files&&input.files[0];
+  if(!f){ input.value=''; return; }
   var fr=new FileReader();
   fr.onload=function(){
     try{
@@ -969,11 +977,16 @@ document.getElementById('fileInput').addEventListener('change',function(e){
         data.push({id:uid(),type:type,amount:Math.abs(amount),cat:cid,note:note,date:date,ts:Date.now()});
         added++;
       });
+      if(!added){
+        toast('没读到有效记录：请选择记账本导出的 CSV');
+        return;
+      }
       save(); renderAll(); toast('已导入 '+added+' 笔');
     }catch(err){ toast('导入失败：文件格式不正确'); }
+    finally{ input.value=''; }   // 读完再清空：读取过程中清空在 iOS 上可能中断读取
   };
+  fr.onerror=function(){ toast('文件读取失败，请重试'); input.value=''; };
   fr.readAsText(f,'utf-8');
-  e.target.value='';
 });
 document.getElementById('rowDemo').addEventListener('click',function(){
   var n=loadDemo();
